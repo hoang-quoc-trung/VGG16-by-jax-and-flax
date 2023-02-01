@@ -33,16 +33,21 @@ class VGG16(nn.Module):
         x = nn.Dense(features=256)(x)
         x = nn.relu(x)
         x = nn.BatchNorm()(x, use_running_average=not training)
-        x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=not training)
-        x = nn.Dense(features=self.num_classes)(x)   
+        x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=not training) 
         if self.output == 'softmax':
+          x = nn.Dense(features=self.num_classes)(x) 
           x = nn.softmax(x)
         if self.output == 'log_softmax':
+          x = nn.Dense(features=self.num_classes)(x) 
           x = nn.log_softmax(x)
         if self.output == 'sigmoid':
+          x = nn.Dense(features=1)(x) 
           x = nn.sigmoid(x)
         if self.output == 'log_sigmoid':
+          x = nn.Dense(features=1)(x) 
           x = nn.log_sigmoid(x)
+        if self.output == 'linear':
+          x = nn.Dense(features=1)(x) 
         return x
     
     def _GlobalAvgPool2D(self, inputs):

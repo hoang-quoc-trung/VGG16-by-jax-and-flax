@@ -12,3 +12,6 @@ class_mode='categorical'
 # Training config
 learning_rate = 1e-2
 num_epochs = 1
+
+# Checkpoint dir
+ckpt_dir = '/home/tpnam/trung/cnn/src/checkpoints'

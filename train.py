@@ -11,7 +11,9 @@ import importlib.util
 from flax.training import train_state
 from src.models.model import VGG16
 from src.utils.dataloader import DataGenerator
-from src.utils.losses import categorical_cross_entropy_loss, compute_metrics
+from src.utils.losses import categorical_cross_entropy_loss, sparse_categorical_cross_entropy_loss, binary_cross_entropy_loss
+from src.utils.losses import binary_metrics, categorical_metrics
+from src.checkpoints.checkpoint import save_checkpoint, load_checkpoint
 
 
 def get_gpu_memory():
@@ -118,9 +120,11 @@ def main(args):
             mutable=["batch_stats"],  # for batch normalization
             rngs={"dropout": dropout_rng},  # for dropout
         )[0]
-        return compute_metrics(logits=logits, labels=label)
-
+        return categorical_metrics(logits=logits, labels=label)
+    
+    
     # Start training loop
+    best_acc = 0.0
     print("Start training...")
     for epoch in range(1, config.num_epochs + 1):
         train_ds.on_epoch_end()
@@ -132,6 +136,11 @@ def main(args):
             state, loss = train_step(state, batch_train)
             metrics = eval_step(state, batch_train)
             print(f"\t [{index}/{len(train_ds) + 1}] Training_Loss: {loss}, Training_accuracy: {metrics['accuracy']}")
+            
+        # Save best accuracy
+        if metrics['accuracy'] > best_acc:
+            best_acc = metrics['accuracy']
+            save_checkpoint(state, config.ckpt_dir)
 
 
 def args_parser():
