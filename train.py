@@ -4,7 +4,6 @@ import jax
 import tqdm
 import optax
 import argparse
-import numpy as np
 import jax.numpy as jnp
 import subprocess as sp
 import importlib.util
@@ -23,7 +22,6 @@ def get_gpu_memory():
     )
     memory_free_values = [int(x.split()[0]) for i, x in enumerate(memory_free_info)]
     return memory_free_values
-
 
 def main(args):
     # Set GPU
@@ -44,40 +42,45 @@ def main(args):
     sys.modules["config"] = config
     spec.loader.exec_module(config)
 
-    # Load the dataset
-    print(f"Loading the dataset from {config.train_data_root}")
-
+    # Load train dataet
     train = DataGenerator(data_root=config.train_data_root,
                           mode='train',
                           class_mode=config.class_mode,
                           batch_size=config.batch_size,
                           shuffle=config.shuffle,
-                          img_size = config.img_size)
+                          img_size = config.img_size,
+                          color_mode=config.color_mode)
     train_ds = train.get_data()
+    
+    # Load val dataset
+    val = DataGenerator(data_root=config.val_data_root,
+                        mode='val',
+                        class_mode=config.class_mode,
+                        batch_size=config.batch_size,
+                        shuffle=config.shuffle,
+                        img_size = config.img_size,
+                        color_mode=config.color_mode)
+    val_ds = val.get_data()
+    
+    # Get num_classes from dataset
     num_classes = train_ds.num_classes
 
-    print("Initializing the model")
-    # PRNG Key
-    rng = jax.random.PRNGKey(config.seed)
-    dropout_rng = jax.random.PRNGKey(config.seed)
-    # Dummy Input for initializing the model
-    dummy_input = jnp.ones(
-        shape=(config.batch_size, config.img_size[0], config.img_size[1], 3)
-    )
-    # Instantiate the Model
-    model = VGG16(num_classes=num_classes)
-    # Initialize the parameters
-    params = model.init(rng, dummy_input)
-    model.apply(params, dummy_input)
-    # Check the parameters
-    jax.tree_map(lambda x: x.shape, params)
-
-    # Create the optimizer
-    optimizer = optax.adam(config.learning_rate)
-    # Create the train state
-    state = train_state.TrainState.create(
-        apply_fn=model.apply, tx=optimizer, params=params
-    )
+    def create_train_state(rng, model):
+        # Dummy Input for initializing the model
+        dummy_input = jnp.ones(
+            shape=(config.batch_size, config.img_size[0], config.img_size[1], config.n_channels)
+        )
+        # Initialize the parameters
+        params = model.init(rng, dummy_input)
+        model.apply(params, dummy_input)
+        # Check the parameters
+        jax.tree_map(lambda x: x.shape, params)
+        # Create the optimizer
+        optimizer = optax.sgd(learning_rate=config.learning_rate, nesterov=config.momentum)
+        state = train_state.TrainState.create(apply_fn=model.apply,
+                                              tx=optimizer,
+                                              params=params)
+        return state
 
     # Define the training step with @jax.jit for faster training
     @jax.jit
@@ -88,10 +91,9 @@ def main(args):
                 params,
                 image,
                 training=True,
-                mutable=["batch_stats"],  # for batch normalization
+                mutable=["batch_stats"],        # for batch normalization
                 rngs={"dropout": dropout_rng},  # for dropout
             )[0]
-
             # print(logits.shape)
             loss = categorical_cross_entropy_loss(logits=logits,
                                                   one_hot_encoded_labels=label)
@@ -107,39 +109,53 @@ def main(args):
         (loss, logits), grads = gradient_fn(state, state.params, batch)
         # Update Parameters
         state = state.apply_gradients(grads=grads)
-
-        return state, loss
+        return state
 
     @jax.jit
-    def eval_step(state, batch):
+    def eval_step(state, batch, dropout_rng):
         image, label = batch
         logits = state.apply_fn(
             state.params,
             image,
             training=True,
-            mutable=["batch_stats"],  # for batch normalization
+            mutable=["batch_stats"],        # for batch normalization
             rngs={"dropout": dropout_rng},  # for dropout
         )[0]
         return categorical_metrics(logits=logits, labels=label)
     
+    print("Initializing the model")
+    # PRNG Key
+    rng = jax.random.PRNGKey(config.seed)
+    dropout_rng = jax.random.PRNGKey(config.seed)
+    # Instantiate the Model
+    model = VGG16(num_classes=num_classes)
+    # Create the train state
+    state = create_train_state(rng, model)
     
     # Start training loop
     best_acc = 0.0
     print("Start training...")
     for epoch in range(1, config.num_epochs + 1):
+        # Updates indexes after each epoch
         train_ds.on_epoch_end()
+        val_ds.on_epoch_end()
         print(f"Epoch {epoch}/{config.num_epochs}:")
-        # Training
-        for index in range(1, len(train_ds) + 1):
+        # For Training
+        for step in tqdm.trange(1, len(train_ds)+1, desc="\t \033[94mTraining: "):
             batch_train = train_ds.next()
-            # Train the model
-            state, loss = train_step(state, batch_train)
-            metrics = eval_step(state, batch_train)
-            print(f"\t [{index}/{len(train_ds) + 1}] Training_Loss: {loss}, Training_accuracy: {metrics['accuracy']}")
-            
-        # Save best accuracy
-        if metrics['accuracy'] > best_acc:
-            best_acc = metrics['accuracy']
+            state = train_step(state, batch_train)
+            train_metrics = eval_step(state, batch_train, dropout_rng)
+        print(f"\t Loss: {train_metrics['loss']}, accuracy: {train_metrics['accuracy']}")
+        
+        # For Validation
+        for step in tqdm.trange(1, len(val_ds)+1, desc="\t \033[94mValidation: "):
+            batch_val = val_ds.next()
+            val_metrics = eval_step(state, batch_val, dropout_rng)
+        print(f"\t Loss: {val_metrics['loss']}, accuracy: {val_metrics['accuracy']}")
+        
+        # Save best val_accuracy
+        if val_metrics['accuracy'] > best_acc:
+            best_acc = val_metrics['accuracy']
             save_checkpoint(state, config.ckpt_dir)
 
 
@@ -150,7 +166,6 @@ def args_parser():
     parser.add_argument("--gpu-memory-fraction", type=float, default=1.0)
     parser.add_argument("--gpu-id", type=int, default=0)
     return parser.parse_args()
-
 
 if __name__ == "__main__":
     args = args_parser()
