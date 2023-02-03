@@ -4,7 +4,7 @@ import os
 
 def save_checkpoint(state, ckpt_dir, keep=2):
     if os.path.exists(ckpt_dir):
-        shutil.rmtree(ckpt_dir)  # Remove any existing checkpoints from the last notebook run.
+        shutil.rmtree(ckpt_dir)
     checkpoints.save_checkpoint(ckpt_dir=ckpt_dir, 
                                 target=state, 
                                 step=state.step, 
