@@ -18,9 +18,8 @@ git push -uf origin main
 git clone https://gitlab.com/me2249/vgg-16-by-jax-and-flax.git
 cd vgg-16-by-jax-and-flax
 conda env create -f environment.yml
-conda activate jax
+conda activate vgg_jax
 ```
-
 
 ## Usage
 - Set training dataset like the following structure:
