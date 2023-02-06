@@ -112,11 +112,16 @@ def main(args):
     
     # ----------------------------------- Data Loader -----------------------------------
     
+    # Get the number of devices (GPU, TPU, CPU...)
+    num_devices = jax.device_count()
+    print("Number devices:", num_devices)
+    # Set batch_size based on number of devices
+    batch_size = config.batch_size*num_devices
     # Load train dataset
     train = DataGenerator(data_root=config.train_data_root,
                           mode='train',
                           class_mode=config.class_mode,
-                          batch_size=config.batch_size,
+                          batch_size=batch_size,
                           shuffle=config.shuffle,
                           img_size = config.img_size,
                           color_mode=config.color_mode)
@@ -127,7 +132,7 @@ def main(args):
     val = DataGenerator(data_root=config.val_data_root,
                         mode='val',
                         class_mode=config.class_mode,
-                        batch_size=config.batch_size,
+                        batch_size=batch_size,
                         shuffle=config.shuffle,
                         img_size = config.img_size,
                         color_mode=config.color_mode)
@@ -156,8 +161,6 @@ def main(args):
     train_batch_metrics = []
     val_batch_metric = []
     print("Start training...")
-    num_devices = jax.device_count()
-    print("Number devices:", num_devices)
     for epoch in range(1, config.num_epochs + 1):
         # Reset the first data position
         train_ds.reset()
